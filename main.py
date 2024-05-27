@@ -1,108 +1,278 @@
-from gurobipy import (GRB, Model, quicksum)
+from gurobipy import GRB
 import gurobipy as gp
-
-'''
-La implementacion computacional de este problema debe poder recibir cualquier instancia de par´ametros,
-independiente de su tamano y valores de los dato
-
-No puede asumir valores ni cardinalidades de ningun
-parametro o conjunto
-
-los cuadrantes como los tipos de semillas seran trabajados de manera
-abstracta, solo considerandolos por sus indices
+import pandas as pd
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem
+import sys
 
 
-Se usaran archivos de disntitntos valores y dimensiones
-para testear el codigo.
-
-Los archivos csv indicaran los tamaños de los conjuntos
-K J T. TODOS LOS VALORES SERAN ENTEROS
-
-Todos parten en 1 y terminan en la cardinalidad del conjutno
-
-
-capacidad por saco:
-
-Archivo de 1 sola columa y J filas.
-Contiene la info de del parametro a_j
-
-
-'''
-
-
+def leer_archivo(archivo: str) -> list:
+    with open(archivo, 'r') as file:
+        return file.readlines()
 
 
 class Modelo:
-    
+
     def __init__(self) -> None:
-        # Leer los archivos
-        
-        with open('limites.csv', 'r') as limites:
-            limites_header = limites.readline().split(',')
-            self.limites = [line.strip().split(',') for line in limites.readlines()]
-            self.largo_limites = len(self.limites)
-        
-        with open('costos.csv', 'r') as costos:
-            costos_header = costos.readline()
-            self.costos = [costo.strip() for costo in costos.readlines()]
-            
-        with open('contenidos_nutricionales.csv', 'r') as contenidos:
-            self.contenidos_header = contenidos.readline().strip().split(',')
-            self.contenidos = [line.strip().split(',') for line in contenidos.readlines()]
-            # Definicion de parametros:
-            self.J = {cereal: costo for cereal, costo in zip(self.contenidos_header, self.costos)}            
-            self.I = {i+1: (self.limites[i][0], self.limites[i][1]) for i in range(len(self.limites))}
-            
-        self.a_ij = {i + 1: {self.contenidos_header[j]: self.contenidos[i][j] for j in range(len(self.J))} for i in range(len(self.I))}
+        '''
+        Leer los archivos
+        y verificar que no esten vacios
+        '''
+
+        archivos = {
+            'capacidad_saco': 'capacidad_por_saco.csv',
+            'costo_saco': 'costo_saco.csv',
+            'tiempo_demora': 'tiempo_demora.csv',
+            'kilos_fruta': 'kilos_fruta.csv',
+            'precio_venta': 'precio_venta.csv',
+            'capital': 'capital_inicial.csv',
+            'cuadrantes': 'cantidad_cuadrantes.csv'
+        }
+        lineas = {key: leer_archivo(value) for key, value in archivos.items()}
+
+        # Verificar que los archivos no estén vacíos
+        assert all(len(value) > 0 for value in lineas.values()
+                   ), "Algun archivo está vacío. Revisa los archivos :)"
+
+        self.capacidad_saco = [
+            int(line.strip()) for line in lineas['capacidad_saco']
+        ]
+        self.costo_saco = [
+            list(map(int, line.strip().split(','))) for line in lineas['costo_saco']
+        ]
+        self.tiempo_demora = [
+            int(line.strip()) for line in lineas['tiempo_demora']
+        ]
+        self.kilos_fruta = [
+            int(line.strip()) for line in lineas['kilos_fruta']
+        ]
+        self.precio_venta = [
+            list(map(int, line.strip().split(','))) for line in lineas['precio_venta']
+        ]
+        self.capital = int(lineas['capital'][0].strip())
+        self.cuadrantes = int(lineas['cuadrantes'][0].strip())
+
+        # Cardinalidad de los conjuntos
+        self.K = range(1, self.cuadrantes + 1)
+        self.J = range(1, len(self.capacidad_saco) + 1)
+        self.T = range(1, len(self.costo_saco[0]) + 1)
+
+        # Archivos que tienen dimensiones J x T
+        archivos_jt = {
+            'costo_saco': self.costo_saco,
+            'precio_venta': self.precio_venta
+        }
+        # Archivos que tienen dimensiones J
+        archivos = {
+            'capacidad_saco': self.capacidad_saco,
+            'tiempo_demora': self.tiempo_demora,
+            'kilos_fruta': self.kilos_fruta,
+        }
+
+        # Verificar que todos los archivos tengan las mismas dimensiones
+        assert all(len(value) == len(self.J) for value in archivos.values(
+        )), "Los archivos no tienen la misma cantidad de elementos"
+        assert all(len(value[0]) == len(self.T) for value in archivos_jt.values(
+        )), "Los archivos no tienen la misma cantidad de elementos"
+
+        # Parametros
+        self.a_j = {
+            j: a_j for j, a_j in zip(self.J, self.capacidad_saco)
+        }
+        self.c_jt = {
+            (j, t): c_jt for j, costo_semilla in zip(self.J, self.costo_saco)
+            for t, c_jt in zip(self.T, costo_semilla)
+        }
+        self.O_j = {
+            j: O_j for j, O_j in zip(self.J, self.tiempo_demora)
+        }
+        self.l_j = {
+            j: l_j for j, l_j in zip(self.J, self.kilos_fruta)
+        }
+        self.B_jt = {
+            (j, t): B_jt for j, precio_semilla in zip(self.J, self.precio_venta)
+            for t, B_jt in zip(self.T, precio_semilla)
+        }
 
     def implementar_modelo(self) -> tuple:
         # Implementando el modelo
         model = gp.Model()
-        
-        # Variables
-        x_j = model.addVars(self.J, vtype=GRB.CONTINUOUS, name="x_j")
-        
+
+        '''
+        Variables de decision
+        x_jkt: 1 si se siembra la semilla j en el cuadrante k en el tiempo t,
+        0 en otro caso
+        y_jkt: 1 si existe la semilla j en el cuadrante k en el tiempo t,
+        0 en otro caso
+        I_t: Cantidad de dienero en el tiempo t
+        U_jt: Cantidad de semillas tipo j al termino del periodo t
+        W_jt: Cantidad de sacos semillas tipo j a comprar en el periodo t
+        '''
+
+        x_jkt = model.addVars(self.J, self.K, self.T,
+                              vtype=GRB.BINARY, name="x_jkt")
+        y_jkt = model.addVars(self.J, self.K, self.T,
+                              vtype=GRB.BINARY, name="y_jkt")
+        I_t = model.addVars(self.T, vtype=GRB.CONTINUOUS, name="I_t")
+        U_jt = model.addVars(self.J, self.T, vtype=GRB.INTEGER, name="U_jt")
+        W_jt = model.addVars(self.J, self.T, vtype=GRB.INTEGER, name="W_jt")
+
         # Agregamos las variables al modelo
         model.update()
-        
-        # Restricciones
+
         '''
-        1. La mezcla esta compuesta unicamente por cereales
-        2. Se debe cumplir una proporcion minima de nutrientes
-        3. Se debe cunokir una proporcion máxima de nutrientes
-        Naturaleza de Variables
-        x_j >= 0
+        Restricciones
+        1. Activación de sembrado
+        2. Solo 1 sembrado por cuadrante
+        3. Inventario de dinero
+        4. Condicion borde inventario dinero
+        5. Inventario de semillas
+        6. Condición borde semillas
+        7. Terminar cosecha antes de volver a cosechar
         '''
-        model.addConstr(quicksum(x_j[j] for j in self.J.keys()) == 1, name="R1")
-        model.addConstrs((quicksum(float(self.a_ij[i][j]) * x_j[j] for j in self.J) >= float(self.I[i][0]) for i in self.I), name="R2")
-        model.addConstrs((quicksum(float(self.a_ij[i][j]) * x_j[j] for j in self.J) <= float(self.I[i][1]) for i in self.I), name="R3")
-        
+
+        model.addConstrs(
+            (sum(y_jkt[j, k, l] for l in range(t, min(t + self.O_j[j] - 1, max(self.T)) + 1))
+             >= self.O_j[j] * x_jkt[j, k, t]
+             for j in self.J for k in self.K for t in self.T),
+            name="Activacion_sembrado"
+        )
+
+        model.addConstrs(
+            (sum(y_jkt[j, k, t] for j in self.J) <= 1
+             for k in self.K for t in self.T),
+            name="Solo_un_sembrado"
+        )
+
+        model.addConstrs(
+            (I_t[t] == I_t[t - 1] - sum(W_jt[j, t] * self.c_jt[j, t] for j in self.J) +
+             sum(x_jkt[j, k, t - self.O_j[j]] * self.l_j[j] *
+                 self.B_jt[(j, t)] for j in self.J if t - self.O_j[j] >= 1 for k in self.K)
+             for t in self.T if t >= 2),
+            name="Inventario_dinero"
+        )
+
+        model.addConstr(
+            I_t[1] == self.capital -
+            sum(self.c_jt[(j, 1)] * W_jt[j, 1] for j in self.J),
+            name="Condicion_borde_dinero"
+        )
+
+        model.addConstrs(
+            (U_jt[j, t] == U_jt[j, t - 1] + self.a_j[j] * W_jt[j, t] -
+             sum(x_jkt[j, k, t] for k in self.K)
+             for j in self.J for t in self.T if t >= 2),
+            name="Inventario_semillas"
+        )
+
+        model.addConstrs(
+            (U_jt[j, 1] == self.a_j[j] * W_jt[j, 1] -
+             sum(x_jkt[j, k, 1] for k in self.K)
+             for j in self.J),
+            name="Condicion_borde_semillas"
+        )
+
+        model.addConstrs(
+            (1 - x_jkt[j, k, t] >= sum(x_jkt[j, k, l] for l in range(t + 1, min(t + self.O_j[j] - 1, max(self.T)) + 1))
+             for j in self.J for k in self.K for t in self.T if t < max(self.T)),
+            name="Terminar_cosecha"
+        )
+
         # Función objetivo
-        objetivo = quicksum(float(self.J[j]) * x_j[j] for j in self.J.keys())
-        model.setObjective(objetivo, GRB.MINIMIZE,)
-        
+        model.setObjective(I_t[max(self.T)], GRB.MAXIMIZE)
+
         # Optimizamos el problema
         model.optimize()
-        return model, x_j
-        
-    def manejo_soluciones(self, model, x_j):
-        
+
+        # Retornamos el modelo y las variables de decisión
+        return (model, x_jkt)
+
+    def manejo_soluciones(self, model, x_jkt) -> None:
+
         # Manejo de soluciones
         print("\n"+"-"*10+" Manejo Soluciones "+"-"*10)
-        print(f"El valor objetivo es de: {model.ObjVal}", "{peso/kg}")
         print()
-        print("Variables de decision:")
-        
-        for j in self.J:
-            print(f"Se debe utilizar {x_j[j].x} kilogramos de {j}")
-        print("\n"+"-"*9+" Restricciones Activas "+"-"*9)
-        
-        for constr in model.getConstrs():
-            if constr.getAttr("slack") == 0:
-                print(f"La restriccion {constr} está activa")
+        print(
+            f"El valor óptimo de la función objetivo es: {model.objVal} unidades monetarias.")
+        print()
+        print("\n"+"-"*10+" Cantidad de veces que se planto en cada terreno "+"-"*10)
+        print()
+        veces_plantado = {k: 0 for k in self.K}
+        for k in self.K:
+            for t in self.T:
+                for j in self.J:
+                    if x_jkt[j, k, t].x == 1:
+                        veces_plantado[k] += 1
+        for k in self.K:
+            print(f"El terreno {k} se plantó {veces_plantado[k]} veces.")
+
+    def ver_calendario(self, x_jkt) -> None:
+        '''
+        Ver el calendario de siembra
+        donde se muestra el cuadrante, la semilla
+        que se siembra y 0 si no se siembra
+        '''
+
+        # Crear un DataFrame vacío con índices basados en self.K y columnas basadas en self.T
+        df = pd.DataFrame(index=['Terreno ' + str(k) for k in self.K],
+                          columns=['Mes ' + str(t) for t in self.T])
+
+        # Rellenar el DataFrame con el tipo de semilla sembrada en cada cuadrante
+        # o 0 si no se sembró nada
+        for k in self.K:
+            for t in self.T:
+                semilla = 0
+                for j in self.J:
+                    if x_jkt[j, k, t].x == 1:
+                        semilla = j
+                df.at['Terreno ' + str(k), 'Mes ' + str(t)] = semilla
+
+        # Convertir el DataFrame a csv
+        df.to_csv('calendario.csv')
+
+
+class MainWindow(QMainWindow):
+    # Clase para mostrar el calendario en una ventana
+    def __init__(self) -> None:
+        super(MainWindow, self).__init__()
+        self.setWindowTitle("Calendario de Siembra")
+
+        # Leer el archivo CSV en un DataFrame
+        df = pd.read_csv('calendario.csv', index_col=0)
+
+        # Crear un QTableWidget y llenarlo con los datos del DataFrame
+        self.table = QTableWidget()
+        self.table.setRowCount(df.shape[0])
+        self.table.setColumnCount(df.shape[1])
+        self.table.setHorizontalHeaderLabels(df.columns)
+        self.table.setVerticalHeaderLabels(df.index)
+
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                self.table.setItem(i, j, QTableWidgetItem(str(df.iloc[i, j])))
+
+        self.setCentralWidget(self.table)
+        self.resize(1450, 300)
+        self.move(200, 300)
+
+        self.show()
+
 
 if __name__ == '__main__':
+
+    '''
+    Instanciamos el modelo,
+    mostramos soluciones
+    y mostramos el calendario
+    con una interfaz gráfica
+    '''
+
     modelo = Modelo()
-    modelo.manejo_soluciones(*modelo.implementar_modelo())
-    
-    
+    variables = modelo.implementar_modelo()
+    modelo.manejo_soluciones(*variables)
+    print()
+    print("-"*10+"Mostrando Calendario"+"-"*10)
+    modelo.ver_calendario(variables[1])
+
+    app = QApplication(sys.argv)
+    mainWin = MainWindow()
+    sys.exit(app.exec())
