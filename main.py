@@ -34,11 +34,10 @@ class Modelo:
         assert all(len(value) > 0 for value in lineas.values()
                    ), "Algun archivo está vacío. Revisa los archivos :)"
         # Verificar que capital y cuadrantes sean un solo valor
-        assert len(lineas['capital']
-                   ) == 1, "El archivo capital debe tener un solo valor"
-        assert len(lineas['cuadrantes']
-                   ) == 1, "El archivo cuadrantes debe tener un solo valor"
-
+        for key in ['capital', 'cuadrantes']:
+            for line in lineas[key]:
+                assert len(line.strip().split(',')
+                           ) == 1, f"El archivo {key} no tiene un solo valor"
         self.capacidad_saco = [
             int(line.strip()) for line in lineas['capacidad_saco']
         ]
