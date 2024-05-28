@@ -134,7 +134,7 @@ class Modelo:
         6. Condición borde semillas
         7. Terminar cosecha antes de volver a cosechar
         '''
-
+        #
         model.addConstrs(
             (sum(y_jkt[j, k, l] for l in range(t, min(t + self.O_j[j] - 1, max(self.T)) + 1))
              >= self.O_j[j] * x_jkt[j, k, t]
