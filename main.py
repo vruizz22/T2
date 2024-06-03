@@ -98,6 +98,24 @@ class Modelo:
             for t, B_jt in zip(self.T, precio_semilla)
         }
 
+        print("\n"+"-"*10+" Parametros "+"-"*10)
+        print()
+        print(self.a_j)
+        print()
+        print(self.c_jt)
+        print()
+        print(self.O_j)
+        print()
+        print(self.l_j)
+        print()
+        print(self.B_jt)
+        print()
+        print(self.K)
+        print()
+        print(self.J)
+        print()
+        print(self.T)
+
     def implementar_modelo(self) -> tuple:
         # Implementando el modelo
         model = gp.Model()
@@ -261,8 +279,7 @@ class MainWindow(QMainWindow):
 
         self.show()
 
-
-if __name__ == '__main__':
+    if __name__ == '__main__':
 
     '''
     Instanciamos el modelo,
