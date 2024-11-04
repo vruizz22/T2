@@ -279,7 +279,8 @@ class MainWindow(QMainWindow):
 
         self.show()
 
-    if __name__ == '__main__':
+
+if __name__ == '__main__':
 
     '''
     Instanciamos el modelo,
